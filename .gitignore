@@ -1,0 +1,35 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build
+dist/
+build/
+.next/
+out/
+
+# Environment Variables (CRITICAL: DO NOT UPLOAD TO GITHUB)
+.env
+.env.local
+.env.production
+.env.development
+*.env*
+
+# Local Database & Uploads
+backend/uploads/
+*.pdf
+.cache/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Logs
+logs/
+*.log
