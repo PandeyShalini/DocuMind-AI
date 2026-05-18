@@ -2,6 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, Send, Plus, FileText, UploadCloud, Settings, Database, Loader2, Copy, Check, ToggleLeft, ToggleRight, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import axios from 'axios';
 
+const API_BASE_URL = import.meta.env.DEV 
+  ? 'http://localhost:5000/api' 
+  : '/_/backend/api';
+
+
 // --- HELPER COMPONENTS ---
 
 const FormattedText = ({ text }) => {
@@ -165,7 +170,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
     setLoading(true);
     try {
       const endpoint = isLogin ? 'login' : 'register';
-      const res = await axios.post(`http://localhost:5000/api/auth/${endpoint}`, formData);
+      const res = await axios.post(`${API_BASE_URL}/auth/${endpoint}`, formData);
       onAuthSuccess(res.data.token, res.data.name);
     } catch (err) {
       alert(err.response?.data?.message || 'Authentication failed');
@@ -229,7 +234,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
 const PdfViewer = ({ data, onClose, token }) => {
   if (!data) return null;
   // Passing token as sanitized query param for iframe authorization
-  const viewerUrl = `http://localhost:5000/api/documents/${data.docId}/view?token=${encodeURIComponent(token)}#page=${data.page || 1}`;
+  const viewerUrl = `${API_BASE_URL}/documents/${data.docId}/view?token=${encodeURIComponent(token)}#page=${data.page || 1}`;
 
   return (
     <div className="pdf-viewer-panel">
@@ -297,7 +302,7 @@ function App() {
 
   const fetchDocuments = async (token) => {
     try {
-      const res = await axios.get('http://localhost:5000/api/documents', {
+      const res = await axios.get(`${API_BASE_URL}/documents`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setDocuments(res.data || []);
@@ -312,7 +317,7 @@ function App() {
     const interval = setInterval(async () => {
       try {
         const promises = processingDocs.map(doc => 
-          axios.get(`http://localhost:5000/api/documents/${doc._id}/status`, {
+          axios.get(`${API_BASE_URL}/documents/${doc._id}/status`, {
             headers: { Authorization: `Bearer ${userToken}` }
           })
         );
@@ -330,7 +335,7 @@ function App() {
     formData.append('file', file);
     setIsUploading(true);
     try {
-      const res = await axios.post('http://localhost:5000/api/documents', formData, {
+      const res = await axios.post(`${API_BASE_URL}/documents`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', Authorization: `Bearer ${userToken}` }
       });
       setDocuments(prev => [res.data, ...prev]);
@@ -351,7 +356,7 @@ function App() {
     setInput('');
     setIsTyping(true);
     try {
-      const res = await axios.post(`http://localhost:5000/api/chat/${docId}`, 
+      const res = await axios.post(`${API_BASE_URL}/chat/${docId}`, 
         { message: queryText, strictMode },
         { headers: { Authorization: `Bearer ${userToken}` } }
       );
