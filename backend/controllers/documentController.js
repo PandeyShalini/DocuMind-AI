@@ -9,6 +9,7 @@ const { Pinecone } = require('@pinecone-database/pinecone');
 
 // Skip local cache warning for Xenova
 env.allowLocalModels = false;
+env.cacheDir = '/tmp/transformers-cache';
 
 // @desc    Upload new document and vectorise
 // @route   POST /api/documents

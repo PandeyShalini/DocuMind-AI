@@ -10,6 +10,7 @@ const { CohereClient } = require('cohere-ai');
 const chatCache = new NodeCache({ stdTTL: 3600 }); // 1 hour cache
 
 env.allowLocalModels = false;
+env.cacheDir = '/tmp/transformers-cache';
 
 // @desc    Send a message and get AI response using RAG
 // @route   POST /api/chat/:documentId
