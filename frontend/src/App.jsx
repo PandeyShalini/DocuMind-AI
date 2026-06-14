@@ -449,7 +449,8 @@ function App() {
       if (viewerData) setViewerData({ docId: res.data._id, page: 1 });
       setMessages(prev => [...prev, { role: 'assistant', content: `Processing **${file.name}**... I am extracting text and building vector indexes. You can start asking questions once the status tag changes to 'Active'.` }]);
     } catch (err) {
-      alert('Upload failed.');
+      const errorMsg = err.response?.data?.message || 'Upload failed.';
+      alert(errorMsg);
     }
     setIsUploading(false);
     e.target.value = null;
