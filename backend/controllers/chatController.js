@@ -2,15 +2,11 @@ const ChatSession = require('../models/ChatSession');
 const Message = require('../models/Message');
 const Document = require('../models/Document');
 // No more AI libraries - using native fetch for extreme resilience
-const { pipeline, env } = require('@xenova/transformers');
 const { Pinecone } = require('@pinecone-database/pinecone');
 const NodeCache = require('node-cache');
 const { CohereClient } = require('cohere-ai');
 
 const chatCache = new NodeCache({ stdTTL: 3600 }); // 1 hour cache
-
-env.allowLocalModels = false;
-env.cacheDir = '/tmp/transformers-cache';
 
 // @desc    Send a message and get AI response using RAG
 // @route   POST /api/chat/:documentId
@@ -71,10 +67,34 @@ const sendMessage = async (req, res) => {
     const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
     const index = pc.index(process.env.PINECONE_INDEX_NAME);
     
-    // Generate local embedding for user query
-    const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-    const embeddingResult = await extractor(message, { pooling: 'mean', normalize: true });
-    const queryEmbedding = Array.from(embeddingResult.data);
+    // Generate embedding for user query using Gemini text-embedding-004 (384 dimensions)
+    const getGeminiEmbedding = async (text) => {
+      const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${process.env.GEMINI_API_KEY}`;
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const res = await fetch(embedUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              content: { parts: [{ text }] },
+              outputDimensionality: 384
+            })
+          });
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Embedding status ${res.status}: ${errText}`);
+          }
+          const data = await res.json();
+          return data.embedding.values;
+        } catch (err) {
+          retries--;
+          if (retries === 0) throw err;
+          await new Promise(r => setTimeout(r, 1000));
+        }
+      }
+    };
+    const queryEmbedding = await getGeminiEmbedding(message);
     
     // Build query with metadata filters
     const queryOptions = {

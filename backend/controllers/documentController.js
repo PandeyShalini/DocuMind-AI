@@ -4,12 +4,7 @@ const Document = require('../models/Document');
 const { PDFLoader } = require('@langchain/community/document_loaders/fs/pdf');
 const { RecursiveCharacterTextSplitter } = require('@langchain/textsplitters');
 const { ChatGoogleGenerativeAI } = require('@langchain/google-genai');
-const { pipeline, env } = require('@xenova/transformers');
 const { Pinecone } = require('@pinecone-database/pinecone');
-
-// Skip local cache warning for Xenova
-env.allowLocalModels = false;
-env.cacheDir = '/tmp/transformers-cache';
 
 // @desc    Upload new document and vectorise
 // @route   POST /api/documents
@@ -74,14 +69,39 @@ const uploadDocument = async (req, res) => {
         });
         const chunks = await textSplitter.splitDocuments(docsWithMetadata);
 
-        // Vectorize & Upsert
-        const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+        // Vectorize & Upsert using Gemini text-embedding-004 API (384 dimensions)
         const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
         const index = pc.index(process.env.PINECONE_INDEX_NAME);
 
+        const getGeminiEmbedding = async (text) => {
+          const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${process.env.GEMINI_API_KEY}`;
+          let retries = 3;
+          while (retries > 0) {
+            try {
+              const res = await fetch(embedUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  content: { parts: [{ text }] },
+                  outputDimensionality: 384
+                })
+              });
+              if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`Embedding status ${res.status}: ${errText}`);
+              }
+              const data = await res.json();
+              return data.embedding.values;
+            } catch (err) {
+              retries--;
+              if (retries === 0) throw err;
+              await new Promise(r => setTimeout(r, 1000));
+            }
+          }
+        };
+
         const vectors = await Promise.all(chunks.map(async (chunk, i) => {
-            const result = await extractor(chunk.pageContent, { pooling: 'mean', normalize: true });
-            const embedding = Array.from(result.data);
+            const embedding = await getGeminiEmbedding(chunk.pageContent);
             const page = chunk.metadata?.loc?.pageNumber || 1;
             const metadata = { ...chunk.metadata, text: chunk.pageContent, page: page };
             if (metadata.loc) delete metadata.loc;
