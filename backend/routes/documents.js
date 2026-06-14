@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const { protect } = require('../middleware/authMiddleware');
-const { uploadDocument, getDocuments, getDocumentStatus, getDocumentFile } = require('../controllers/documentController');
+const { uploadDocument, getDocuments, getDocumentStatus } = require('../controllers/documentController');
 
 // Multer setup for memory storage
 const storage = multer.memoryStorage();
@@ -23,6 +23,5 @@ router.route('/')
   .post(protect, upload.single('file'), uploadDocument);
 
 router.get('/:id/status', protect, getDocumentStatus);
-router.get('/:id/view', protect, getDocumentFile);
 
 module.exports = router;

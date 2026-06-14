@@ -6,6 +6,55 @@ const API_BASE_URL = import.meta.env.DEV
   ? 'http://localhost:5000/api' 
   : '/_/backend/api';
 
+// --- INDEXEDDB CACHING HELPERS ---
+const DB_NAME = 'DocuMindCacheDB';
+const STORE_NAME = 'pdfStore';
+
+const initDB = () => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'docId' });
+      }
+    };
+    request.onsuccess = (e) => resolve(e.target.result);
+    request.onerror = (e) => reject(e.target.error);
+  });
+};
+
+const saveFileToIndexedDB = async (docId, file) => {
+  try {
+    const db = await initDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const record = { docId, file, filename: file.name, updatedAt: Date.now() };
+      const request = store.put(record);
+      request.onsuccess = () => resolve();
+      request.onerror = (e) => reject(e.target.error);
+    });
+  } catch (err) {
+    console.error('IndexedDB save error:', err);
+  }
+};
+
+const getFileFromIndexedDB = async (docId) => {
+  try {
+    const db = await initDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(docId);
+      request.onsuccess = (e) => resolve(e.target.result);
+      request.onerror = (e) => reject(e.target.error);
+    });
+  } catch (err) {
+    console.error('IndexedDB fetch error:', err);
+    return null;
+  }
+};
 
 // --- HELPER COMPONENTS ---
 
@@ -16,7 +65,7 @@ const FormattedText = ({ text }) => {
     <>
       {parts.map((part, i) => {
         if (part.startsWith('**') && part.endsWith('**')) {
-          return <strong key={i} style={{ color: 'white' }}>{part.slice(2, -2)}</strong>;
+          return <strong key={i}>{part.slice(2, -2)}</strong>;
         }
         return <span key={i}>{part}</span>;
       })}
@@ -231,10 +280,38 @@ const AuthScreen = ({ onAuthSuccess }) => {
   );
 };
 
-const PdfViewer = ({ data, onClose, token }) => {
+const PdfViewer = ({ data, onClose }) => {
+  const [pdfUrl, setPdfUrl] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let url = null;
+    const loadPdf = async () => {
+      setLoading(true);
+      const record = await getFileFromIndexedDB(data.docId);
+      if (record && record.file) {
+        url = URL.createObjectURL(record.file);
+        setPdfUrl(url);
+      } else {
+        setPdfUrl(null);
+      }
+      setLoading(false);
+    };
+
+    if (data) {
+      loadPdf();
+    }
+
+    return () => {
+      if (url) {
+        URL.revokeObjectURL(url);
+      }
+    };
+  }, [data]);
+
   if (!data) return null;
-  // Passing token as sanitized query param for iframe authorization
-  const viewerUrl = `${API_BASE_URL}/documents/${data.docId}/view?token=${encodeURIComponent(token)}#page=${data.page || 1}`;
+
+  const viewerUrl = pdfUrl ? `${pdfUrl}#page=${data.page || 1}` : null;
 
   return (
     <div className="pdf-viewer-panel">
@@ -246,14 +323,30 @@ const PdfViewer = ({ data, onClose, token }) => {
            <Plus size={24} style={{ transform: 'rotate(45deg)' }}/>
         </button>
       </div>
-      <iframe 
-        key={viewerUrl}
-        src={viewerUrl} 
-        width="100%" 
-        height="100%" 
-        style={{ border: 'none', background: 'white' }} 
-        title="PDF Viewer" 
-      />
+      {loading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '1rem', color: 'var(--text-muted)' }}>
+          <Loader2 className="animate-spin" size={32} />
+          <span>Loading local PDF from cache...</span>
+        </div>
+      ) : viewerUrl ? (
+        <iframe 
+          key={viewerUrl}
+          src={viewerUrl} 
+          width="100%" 
+          height="100%" 
+          style={{ border: 'none', background: 'white' }} 
+          title="PDF Viewer" 
+        />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', padding: '2rem', textAlign: 'center', gap: '1rem', color: 'var(--text-muted)' }}>
+          <FileText size={48} style={{ color: 'var(--primary)' }} />
+          <h3>Preview Not Available on This Device</h3>
+          <p style={{ maxWidth: '300px', fontSize: '0.9rem', lineHeight: '1.5' }}>
+            The physical PDF is stored in the browser cache of the device where it was uploaded. 
+            However, your vector embeddings are fully synced and active—you can still query and chat with this document!
+          </p>
+        </div>
+      )}
     </div>
   );
 };
@@ -331,6 +424,15 @@ function App() {
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file || !userToken) return;
+
+    // Vercel Serverless payload limit is strictly 4.5MB
+    const MAX_FILE_SIZE = 4.5 * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+      alert(`File is too large (${(file.size / (1024 * 1024)).toFixed(2)}MB). Since this app is hosted on Vercel's serverless environment, uploads are strictly limited to 4.5MB. Please upload a smaller PDF or compress your document.`);
+      e.target.value = null;
+      return;
+    }
+
     const formData = new FormData();
     formData.append('file', file);
     setIsUploading(true);
@@ -338,6 +440,10 @@ function App() {
       const res = await axios.post(`${API_BASE_URL}/documents`, formData, {
         headers: { 'Content-Type': 'multipart/form-data', Authorization: `Bearer ${userToken}` }
       });
+      
+      // Save uploaded file into local IndexedDB
+      await saveFileToIndexedDB(res.data._id, file);
+
       setDocuments(prev => [res.data, ...prev]);
       setActiveDoc(res.data);
       if (viewerData) setViewerData({ docId: res.data._id, page: 1 });
@@ -416,11 +522,11 @@ function App() {
              </div>
           ))}
         </div>
-        <div style={{ marginTop: 'auto', paddingTop: '1rem', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'linear-gradient(135deg, var(--primary), #ec4899)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>{userName ? userName[0].toUpperCase() : 'U'}</div>
+        <div className="sidebar-footer">
+          <div className="user-profile-avatar">{userName ? userName[0].toUpperCase() : 'U'}</div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '0.9rem', fontWeight: '500' }}>{userName || 'User'}</div>
-            <div onClick={handleLogout} style={{ fontSize: '0.75rem', color: 'var(--primary)', cursor: 'pointer', fontWeight: '600' }}>Sign Out</div>
+            <div style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--text-main)' }}>{userName || 'User'}</div>
+            <div onClick={handleLogout} className="signout-link">Sign Out</div>
           </div>
         </div>
       </aside>
@@ -430,7 +536,7 @@ function App() {
           <header className="chat-header">
             <div className="document-info">
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                {activeDoc ? <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: activeDoc.status === 'completed' ? '#10b981' : '#f59e0b' }}></span> : <Sparkles size={16} color="#818cf8"/>}
+                {activeDoc ? <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: activeDoc.status === 'completed' ? '#10b981' : '#f59e0b' }}></span> : <Sparkles size={16} className="sparkles-icon" />}
                 {activeDoc ? <span>Focus: <strong>{activeDoc.filename}</strong></span> : <span>Mode: <strong>Cross-Document Library Search</strong></span>}
               </span>
             </div>
@@ -470,7 +576,7 @@ function App() {
             <p style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>DocuMind AI can hallucinate. Cross-check with cited sources.</p>
           </div>
         </main>
-        {viewerData && <PdfViewer data={viewerData} onClose={() => setViewerData(null)} token={userToken} />}
+        {viewerData && <PdfViewer data={viewerData} onClose={() => setViewerData(null)} />}
       </div>
     </div>
   );

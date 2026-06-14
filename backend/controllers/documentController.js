@@ -19,21 +19,13 @@ const uploadDocument = async (req, res) => {
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    // 1. Save Physical File for the Viewer
-    const uploadDir = path.join(__dirname, '../uploads');
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-    
-    const fileName = `${Date.now()}_${req.file.originalname}`;
-    const filePath = path.join(uploadDir, fileName);
-    fs.writeFileSync(filePath, req.file.buffer);
-
-    // 2. Create entry in DB
+    // 1. Storage path set to 'indexeddb' for browser-side caching
     const userNamespace = `user_${req.user._id}`;
     const doc = await Document.create({
       user: req.user._id,
       filename: req.file.originalname,
       pineconeNamespace: userNamespace, // Shared namespace per user
-      storagePath: fileName, // Store relative path
+      storagePath: 'indexeddb', // Store 'indexeddb' indicator
       status: 'processing'
     });
 
@@ -121,27 +113,6 @@ const uploadDocument = async (req, res) => {
   }
 };
 
-// @desc    Serve raw PDF for the viewer
-// @route   GET /api/documents/:id/view
-const getDocumentFile = async (req, res) => {
-  try {
-    const doc = await Document.findOne({ _id: req.params.id, user: req.user._id });
-    if (!doc || !doc.storagePath) {
-      return res.status(404).json({ message: 'File not found on disk' });
-    }
-
-    const filePath = path.join(__dirname, '../uploads', doc.storagePath);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: 'File missing from storage' });
-    }
-
-    res.contentType("application/pdf");
-    fs.createReadStream(filePath).pipe(res);
-  } catch (err) {
-    res.status(500).json({ message: 'Error serving file' });
-  }
-};
-
 // @desc    Get specific document status
 // @route   GET /api/documents/:id/status
 const getDocumentStatus = async (req, res) => {
@@ -165,6 +136,5 @@ const getDocuments = async (req, res) => {
 module.exports = {
   uploadDocument,
   getDocuments,
-  getDocumentStatus,
-  getDocumentFile
+  getDocumentStatus
 };
