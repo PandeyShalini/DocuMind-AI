@@ -67,9 +67,9 @@ const sendMessage = async (req, res) => {
     const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
     const index = pc.index(process.env.PINECONE_INDEX_NAME);
     
-    // Generate embedding for user query using Gemini text-embedding-004 (384 dimensions)
+    // Generate embedding for user query using Gemini gemini-embedding-001 (384 dimensions)
     const getGeminiEmbedding = async (text) => {
-      const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${process.env.GEMINI_API_KEY}`;
+      const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${process.env.GEMINI_API_KEY}`;
       let retries = 3;
       while (retries > 0) {
         try {

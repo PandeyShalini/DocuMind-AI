@@ -74,7 +74,7 @@ const uploadDocument = async (req, res) => {
         const index = pc.index(process.env.PINECONE_INDEX_NAME);
 
         const getGeminiEmbedding = async (text) => {
-          const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${process.env.GEMINI_API_KEY}`;
+          const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${process.env.GEMINI_API_KEY}`;
           let retries = 3;
           while (retries > 0) {
             try {
