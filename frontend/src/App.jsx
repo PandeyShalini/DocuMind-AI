@@ -56,6 +56,38 @@ const getFileFromIndexedDB = async (docId) => {
   }
 };
 
+// --- FUZZY CITATION FINDER ---
+const findParentDoc = (sourceName, documents) => {
+  if (!sourceName || !documents) return null;
+  // 1. Exact match
+  let doc = documents.find(d => d.filename === sourceName);
+  if (doc) return doc;
+
+  // 2. Case-insensitive match
+  doc = documents.find(d => d.filename.toLowerCase() === sourceName.toLowerCase());
+  if (doc) return doc;
+
+  // 3. Normalised match (remove spaces, punctuation, extensions)
+  const clean = (str) => str.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/pdf$/, '');
+  const cleanSource = clean(sourceName);
+  doc = documents.find(d => clean(d.filename) === cleanSource);
+  if (doc) return doc;
+
+  // 4. Prefix match (first 15 characters of cleaned names)
+  doc = documents.find(d => {
+    const dClean = clean(d.filename);
+    return dClean.slice(0, 15) === cleanSource.slice(0, 15);
+  });
+  if (doc) return doc;
+
+  // 5. Fallback: if there's only 1 document in library, return it
+  if (documents.length === 1) {
+    return documents[0];
+  }
+
+  return null;
+};
+
 // --- HELPER COMPONENTS ---
 
 const FormattedText = ({ text }) => {
@@ -158,8 +190,8 @@ const MessageBubble = ({ msg, isNewest, onSuggestClick, onSourceClick, documents
             {showSources && (
               <div className="source-card-container">
                 {structuredData.sources.map((src, i) => {
-                  const parentDoc = documents?.find(d => d.filename === src.source);
-                  const isViewable = !!parentDoc?.storagePath;
+                  const parentDoc = findParentDoc(src.source, documents);
+                  const isViewable = !!parentDoc;
 
                   return (
                     <div 
@@ -280,7 +312,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
   );
 };
 
-const PdfViewer = ({ data, onClose }) => {
+const PdfViewer = ({ data, onClose, documents }) => {
   const [pdfUrl, setPdfUrl] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -288,11 +320,32 @@ const PdfViewer = ({ data, onClose }) => {
     let url = null;
     const loadPdf = async () => {
       setLoading(true);
-      const record = await getFileFromIndexedDB(data.docId);
-      if (record && record.file) {
-        url = URL.createObjectURL(record.file);
-        setPdfUrl(url);
-      } else {
+      try {
+        const record = await getFileFromIndexedDB(data.docId);
+        if (record && record.file) {
+          url = URL.createObjectURL(record.file);
+          setPdfUrl(url);
+        } else {
+          // Fallback: download from backend
+          const token = localStorage.getItem('rag_token') || 'BYPASS_TOKEN';
+          const response = await axios.get(`${API_BASE_URL}/documents/${data.docId}/download`, {
+            headers: { Authorization: `Bearer ${token}` },
+            responseType: 'blob'
+          });
+          
+          const fileBlob = response.data;
+          const docMeta = documents.find(d => d._id === data.docId);
+          const filename = docMeta ? docMeta.filename : 'document.pdf';
+          const fileObj = new File([fileBlob], filename, { type: 'application/pdf' });
+          
+          // Save to local cache so we don't have to download next time
+          await saveFileToIndexedDB(data.docId, fileObj);
+          
+          url = URL.createObjectURL(fileObj);
+          setPdfUrl(url);
+        }
+      } catch (err) {
+        console.error('Failed to load PDF:', err);
         setPdfUrl(null);
       }
       setLoading(false);
@@ -475,7 +528,7 @@ function App() {
   };
 
   const handleSourceClick = (source) => {
-    const doc = documents.find(d => d.filename === source.source);
+    const doc = findParentDoc(source.source, documents);
     if (doc) setViewerData({ docId: doc._id, page: source.page });
     else if (activeDoc) setViewerData({ docId: activeDoc._id, page: source.page });
   };
@@ -577,7 +630,7 @@ function App() {
             <p style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>DocuMind AI can hallucinate. Cross-check with cited sources.</p>
           </div>
         </main>
-        {viewerData && <PdfViewer data={viewerData} onClose={() => setViewerData(null)} />}
+        {viewerData && <PdfViewer data={viewerData} onClose={() => setViewerData(null)} documents={documents} />}
       </div>
     </div>
   );

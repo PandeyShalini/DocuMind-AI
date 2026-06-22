@@ -21,9 +21,23 @@ const uploadDocument = async (req, res) => {
       user: req.user._id,
       filename: req.file.originalname,
       pineconeNamespace: userNamespace, // Shared namespace per user
-      storagePath: 'indexeddb', // Store 'indexeddb' indicator
+      storagePath: 'indexeddb', // Will be updated to actual disk path below
       status: 'processing'
     });
+
+    // Save physical file to disk for downloading from other devices
+    try {
+      const uploadDir = path.join(__dirname, '../uploads');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      const filePath = path.join(uploadDir, `${doc._id}.pdf`);
+      fs.writeFileSync(filePath, req.file.buffer);
+      doc.storagePath = `uploads/${doc._id}.pdf`;
+      await doc.save();
+    } catch (saveErr) {
+      console.error('Failed to save file copy on disk:', saveErr.message);
+    }
 
     // Send immediate response
     res.status(202).json(doc);
@@ -154,8 +168,43 @@ const getDocuments = async (req, res) => {
   res.json(documents);
 };
 
+// @desc    Download PDF file on demand
+// @route   GET /api/documents/:id/download
+// @access  Private
+const downloadDocument = async (req, res) => {
+  try {
+    const doc = await Document.findOne({ _id: req.params.id, user: req.user._id });
+    if (!doc) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    let filePath = path.join(__dirname, '..', doc.storagePath || '');
+    if (!fs.existsSync(filePath) || doc.storagePath === 'indexeddb') {
+      // Fallback: search uploads directory for filename matching exactly or with a prefix
+      const uploadsDir = path.join(__dirname, '../uploads');
+      if (fs.existsSync(uploadsDir)) {
+        const files = fs.readdirSync(uploadsDir);
+        const match = files.find(f => f === doc.filename || f.endsWith(`_${doc.filename}`));
+        if (match) {
+          filePath = path.join(uploadsDir, match);
+        }
+      }
+    }
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ message: 'Physical PDF file not found on server' });
+    }
+
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error('Download error:', error);
+    res.status(500).json({ message: 'Server Error downloading document' });
+  }
+};
+
 module.exports = {
   uploadDocument,
   getDocuments,
-  getDocumentStatus
+  getDocumentStatus,
+  downloadDocument
 };
