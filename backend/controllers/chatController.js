@@ -16,6 +16,9 @@ const sendMessage = async (req, res) => {
     const { message, strictMode } = req.body;
     const documentId = req.params.documentId;
 
+    const clientApiKey = req.headers['x-gemini-api-key'] || req.headers['x-api-key'];
+    const geminiApiKey = clientApiKey || process.env.GEMINI_API_KEY;
+
     if (!message) return res.status(400).json({ message: 'No query provided' });
 
     const isGlobalSearch = documentId === 'all';
@@ -69,7 +72,7 @@ const sendMessage = async (req, res) => {
     
     // Generate embedding for user query using Gemini gemini-embedding-001 (384 dimensions)
     const getGeminiEmbedding = async (text) => {
-      const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${process.env.GEMINI_API_KEY}`;
+      const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${geminiApiKey}`;
       let retries = 3;
       while (retries > 0) {
         try {
@@ -152,8 +155,8 @@ const sendMessage = async (req, res) => {
     console.log(`--------------------------\n`);
 
     // 5. Call LLM with Context
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY is missing from environment variables.");
+    if (!geminiApiKey) {
+      throw new Error("Gemini API Key is missing. Please set GEMINI_API_KEY in the environment or provide a custom key in settings.");
     }
 
     // Token Optimization
@@ -198,7 +201,7 @@ const sendMessage = async (req, res) => {
 
     const callDirectFetchAI = async (modelName, retryCount = 0) => {
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
         console.log(`>>> [AI] Attempting ${modelName} | URL: ${url.split('?')[0]}`);
         
         const response = await fetch(url, {

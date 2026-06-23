@@ -15,6 +15,9 @@ const uploadDocument = async (req, res) => {
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
+    const clientApiKey = req.headers['x-gemini-api-key'] || req.headers['x-api-key'];
+    const geminiApiKey = clientApiKey || process.env.GEMINI_API_KEY;
+
     // 1. Storage path set to 'indexeddb' for browser-side caching
     const userNamespace = `user_${req.user._id}`;
     const doc = await Document.create({
@@ -25,18 +28,13 @@ const uploadDocument = async (req, res) => {
       status: 'processing'
     });
 
-    // Save physical file to disk for downloading from other devices
+    // Save physical file copy to MongoDB for serverless-safe downloads
     try {
-      const uploadDir = path.join(__dirname, '../uploads');
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-      const filePath = path.join(uploadDir, `${doc._id}.pdf`);
-      fs.writeFileSync(filePath, req.file.buffer);
-      doc.storagePath = `uploads/${doc._id}.pdf`;
+      doc.fileData = req.file.buffer;
+      doc.storagePath = 'mongodb';
       await doc.save();
     } catch (saveErr) {
-      console.error('Failed to save file copy on disk:', saveErr.message);
+      console.error('Failed to save file buffer in MongoDB:', saveErr.message);
     }
 
     // Send immediate response
@@ -55,7 +53,7 @@ const uploadDocument = async (req, res) => {
           const llm = new ChatGoogleGenerativeAI({
             model: "gemini-2.5-flash", 
             apiVersion: "v1beta",
-            apiKey: process.env.GEMINI_API_KEY
+            apiKey: geminiApiKey
           });
           // Limit to first 6000 chars roughly to stay in small token window for summary
           const IntroText = rawText.substring(0, 6000);
@@ -88,7 +86,7 @@ const uploadDocument = async (req, res) => {
         const index = pc.index(process.env.PINECONE_INDEX_NAME);
 
         const getGeminiEmbedding = async (text) => {
-          const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${process.env.GEMINI_API_KEY}`;
+          const embedUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${geminiApiKey}`;
           let retries = 3;
           while (retries > 0) {
             try {
@@ -178,6 +176,13 @@ const downloadDocument = async (req, res) => {
       return res.status(404).json({ message: 'Document not found' });
     }
 
+    // Serve directly from MongoDB if available
+    if (doc.fileData && (doc.storagePath === 'mongodb' || !doc.storagePath || doc.storagePath === 'indexeddb')) {
+      res.contentType('application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.filename)}"`);
+      return res.send(doc.fileData);
+    }
+
     let filePath = path.join(__dirname, '..', doc.storagePath || '');
     if (!fs.existsSync(filePath) || doc.storagePath === 'indexeddb') {
       // Fallback: search uploads directory for filename matching exactly or with a prefix
@@ -191,7 +196,13 @@ const downloadDocument = async (req, res) => {
       }
     }
 
+    // Secondary fallback: if physical file doesn't exist on disk, check if we have MongoDB data (for safety)
     if (!fs.existsSync(filePath)) {
+      if (doc.fileData) {
+        res.contentType('application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.filename)}"`);
+        return res.send(doc.fileData);
+      }
       return res.status(404).json({ message: 'Physical PDF file not found on server' });
     }
 

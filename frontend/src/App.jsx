@@ -6,6 +6,21 @@ const API_BASE_URL = import.meta.env.DEV
   ? 'http://localhost:5000/api' 
   : '/_/backend/api';
 
+// --- GLOBAL AXIOS CONFIGURATION ---
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('rag_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  const customApiKey = localStorage.getItem('custom_gemini_api_key');
+  if (customApiKey) {
+    config.headers['x-gemini-api-key'] = customApiKey;
+  }
+  return config;
+}, (error) => {
+  return Promise.reject(error);
+});
+
 // --- INDEXEDDB CACHING HELPERS ---
 const DB_NAME = 'DocuMindCacheDB';
 const STORE_NAME = 'pdfStore';
@@ -415,13 +430,45 @@ function App() {
   const [activeDoc, setActiveDoc] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  // --- AUTH BYPASS MODE (FORCE DIRECT LANDING) ---
-  const [userToken, setUserToken] = useState('BYPASS_TOKEN');
-  const [userName, setUserName] = useState('Admin Guest');
+  const [userToken, setUserToken] = useState(() => {
+    const token = localStorage.getItem('rag_token');
+    if (token) return token;
+    
+    // Fallback to guest token
+    let guestToken = localStorage.getItem('guest_token');
+    if (!guestToken) {
+      guestToken = 'guest_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      localStorage.setItem('guest_token', guestToken);
+    }
+    return guestToken;
+  });
+
+  const [userName, setUserName] = useState(() => {
+    const name = localStorage.getItem('rag_user');
+    if (name) return name;
+    
+    const guestToken = localStorage.getItem('guest_token') || 'guest_';
+    return 'Guest ' + guestToken.substring(6, 12).toUpperCase();
+  });
+
   const [strictMode, setStrictMode] = useState(false);
   const [viewerData, setViewerData] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [customApiKey, setCustomApiKeyState] = useState(localStorage.getItem('custom_gemini_api_key') || '');
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+
+  const handleSaveSettings = (key) => {
+    const trimmedKey = key.trim();
+    if (trimmedKey) {
+      localStorage.setItem('custom_gemini_api_key', trimmedKey);
+    } else {
+      localStorage.removeItem('custom_gemini_api_key');
+    }
+    setCustomApiKeyState(trimmedKey);
+    setShowSettings(false);
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -439,11 +486,35 @@ function App() {
   };
 
   const handleLogout = () => {
-    // In bypass mode, logout just refreshes the guest session
-    setUserToken("BYPASS_TOKEN");
-    setUserName("Admin Guest");
     localStorage.removeItem('rag_token');
     localStorage.removeItem('rag_user');
+    
+    const guestToken = localStorage.getItem('guest_token');
+    setUserToken(guestToken);
+    setUserName('Guest ' + guestToken.substring(6, 12).toUpperCase());
+    
+    // Clear chat and document states in UI
+    setDocuments([]);
+    setActiveDoc(null);
+    setMessages([
+      { role: 'assistant', content: 'Upload a PDF and ask questions. Get accurate answers with source references. No hallucination. Fully explainable AI.' }
+    ]);
+  };
+
+  const handleResetGuestSession = () => {
+    const newGuestToken = 'guest_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    localStorage.setItem('guest_token', newGuestToken);
+    localStorage.removeItem('rag_token');
+    localStorage.removeItem('rag_user');
+    setUserToken(newGuestToken);
+    setUserName('Guest ' + newGuestToken.substring(6, 12).toUpperCase());
+    
+    // Clear chat and document states in UI
+    setDocuments([]);
+    setActiveDoc(null);
+    setMessages([
+      { role: 'assistant', content: 'Upload a PDF and ask questions. Get accurate answers with source references. No hallucination. Fully explainable AI.' }
+    ]);
   };
 
   const fetchDocuments = async (token) => {
@@ -538,7 +609,7 @@ function App() {
     processQuery(input);
   };
 
-  if (!userToken) return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
+
 
   return (
     <div className="app-container">
@@ -578,9 +649,26 @@ function App() {
         </div>
         <div className="sidebar-footer">
           <div className="user-profile-avatar">{userName ? userName[0].toUpperCase() : 'U'}</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--text-main)' }}>{userName || 'User'}</div>
-            <div onClick={handleLogout} className="signout-link">Sign Out</div>
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            <div style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{userName || 'User'}</span>
+              {customApiKey && <span className="api-badge" title="Custom Gemini API Key Active" style={{ flexShrink: 0 }}>API KEY</span>}
+            </div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '2px', fontSize: '0.75rem', flexWrap: 'wrap' }}>
+              {userToken && userToken.startsWith('guest_') ? (
+                <>
+                  <span onClick={() => setShowAuthModal(true)} className="signout-link" style={{ fontWeight: '700' }}>Login</span>
+                  <span style={{ color: 'var(--text-muted)' }}>•</span>
+                  <span onClick={handleResetGuestSession} className="signout-link">Reset</span>
+                </>
+              ) : (
+                <span onClick={handleLogout} className="signout-link">Sign Out</span>
+              )}
+              <span style={{ color: 'var(--text-muted)' }}>•</span>
+              <span onClick={() => setShowSettings(true)} className="signout-link" style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                <Settings size={12} /> Settings
+              </span>
+            </div>
           </div>
         </div>
       </aside>
@@ -632,6 +720,61 @@ function App() {
         </main>
         {viewerData && <PdfViewer data={viewerData} onClose={() => setViewerData(null)} documents={documents} />}
       </div>
+
+      {showSettings && (
+        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3><Settings size={20} /> Settings</h3>
+              <button className="modal-close-btn" onClick={() => setShowSettings(false)}>
+                <Plus size={20} style={{ transform: 'rotate(45deg)' }} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="settings-group">
+                <label style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-main)' }}>Custom Gemini API Key</label>
+                <input 
+                  type="password"
+                  className="settings-input"
+                  placeholder="Enter your Gemini API Key (AIzaSy...)"
+                  value={customApiKey}
+                  onChange={(e) => setCustomApiKeyState(e.target.value)}
+                  style={{ width: '100%', background: 'var(--surface)', border: '1px solid var(--border)', padding: '0.65rem 0.85rem', borderRadius: '8px', outline: 'none' }}
+                />
+                <p className="settings-help" style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: '1.4', marginTop: '0.25rem' }}>
+                  If the default API key is rate-limited or exhausted, you can provide your own. Get a free API key from the <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', textDecoration: 'none', fontWeight: '500' }}>Google AI Studio Console</a>. Leave blank to use the default server key.
+                </p>
+              </div>
+              <div className="settings-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+                <button className="btn-secondary" onClick={() => {
+                  setCustomApiKeyState(localStorage.getItem('custom_gemini_api_key') || '');
+                  setShowSettings(false);
+                }} style={{ background: 'var(--surface)', border: '1px solid var(--border)', padding: '0.55rem 1rem', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>
+                  Cancel
+                </button>
+                <button className="btn-primary" onClick={() => handleSaveSettings(customApiKey)} style={{ background: 'var(--primary)', border: 'none', color: 'white', padding: '0.55rem 1rem', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}>
+                  Save Settings
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAuthModal && (
+        <div className="modal-overlay" onClick={() => setShowAuthModal(false)}>
+          <div onClick={(e) => e.stopPropagation()}>
+            <AuthScreen onAuthSuccess={(token, name) => {
+              setUserToken(token);
+              setUserName(name);
+              localStorage.setItem('rag_token', token);
+              localStorage.setItem('rag_user', name);
+              setShowAuthModal(false);
+              fetchDocuments(token);
+            }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

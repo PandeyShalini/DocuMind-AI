@@ -27,6 +27,9 @@ const documentSchema = mongoose.Schema(
     storagePath: {
       type: String, // Path to physical PDF file on disk
     },
+    fileData: {
+      type: Buffer, // Stores physical PDF file in MongoDB binary format
+    },
   },
   {
     timestamps: true,

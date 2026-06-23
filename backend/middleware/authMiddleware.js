@@ -16,35 +16,23 @@ const protect = async (req, res, next) => {
     token = req.query.token;
   }
 
-  // --- AUTH BYPASS (TEMPORARY) ---
-  if (token === "BYPASS_TOKEN") {
-    try {
-      // Find the first user in the system to act as a "Developer Guest"
-      const guestUser = await User.findOne();
-      if (guestUser) {
-         req.user = guestUser;
-         return next();
-      } else {
-         // Automatically create a default Admin Guest if database is brand new and empty
-         const defaultGuest = await User.create({
-           name: "Admin Guest",
-           email: "guest@documind.ai",
-           password: "password123"
-         });
-         req.user = defaultGuest;
-         return next();
-      }
-    } catch (dbError) {
-      console.error("Database connection failed in bypass token middleware:", dbError);
-      return res.status(500).json({ 
-        message: "Database connection failed. Please check your MONGO_URI in Vercel settings and ensure your MongoDB Atlas IP Access List (whitelist) allows connection (0.0.0.0/0).", 
-        error: dbError.message 
-      });
-    }
-  }
 
   if (token) {
     try {
+      // Check if it is an anonymous guest token
+      if (token.startsWith('guest_')) {
+        let guestUser = await User.findOne({ email: token + "@documind.guest" });
+        if (!guestUser) {
+          guestUser = await User.create({
+            name: "Guest " + token.substring(6, 12).toUpperCase(),
+            email: token + "@documind.guest",
+            password: "guest_password_" + token
+          });
+        }
+        req.user = guestUser;
+        return next();
+      }
+
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
