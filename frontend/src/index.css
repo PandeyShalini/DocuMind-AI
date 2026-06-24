@@ -872,7 +872,7 @@ body {
   color: var(--text-main);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .sidebar-toggle-btn {
     display: flex;
   }
