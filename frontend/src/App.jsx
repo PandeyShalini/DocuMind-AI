@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageSquare, Send, Plus, FileText, UploadCloud, Settings, Database, Loader2, Copy, Check, ToggleLeft, ToggleRight, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import { MessageSquare, Send, Plus, FileText, UploadCloud, Settings, Database, Loader2, Copy, Check, ToggleLeft, ToggleRight, Sparkles, ChevronDown, ChevronUp, Menu } from 'lucide-react';
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.DEV 
@@ -455,6 +455,7 @@ function App() {
   const [viewerData, setViewerData] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
   const [customApiKey, setCustomApiKeyState] = useState(localStorage.getItem('custom_gemini_api_key') || '');
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -613,7 +614,10 @@ function App() {
 
   return (
     <div className="app-container">
-      <aside className="sidebar">
+      {showSidebar && (
+        <div className="sidebar-overlay-mobile" onClick={() => setShowSidebar(false)}></div>
+      )}
+      <aside className={`sidebar ${showSidebar ? 'show' : ''}`}>
         <h2><FileText size={24}/> DocuMind AI</h2>
         <button className="new-chat-btn" onClick={() => fileInputRef.current.click()} disabled={isUploading}>
            {isUploading ? <Loader2 className="animate-spin" size={20}/> : <Plus size={20} />}
@@ -623,6 +627,7 @@ function App() {
           <div className={`global-search-item ${!activeDoc ? 'active' : ''}`} onClick={() => {
              setActiveDoc(null);
              setViewerData(null);
+             setShowSidebar(false);
           }}>
              <Sparkles size={18} /> Search All My Knowledge
           </div>
@@ -631,6 +636,7 @@ function App() {
               <div key={doc._id} className={`history-item ${activeDoc?._id === doc._id ? 'active' : ''}`} onClick={() => {
                 setActiveDoc(doc);
                 if (viewerData) setViewerData({ docId: doc._id, page: 1 });
+                setShowSidebar(false);
               }}>
                <FileText size={18} />
                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -657,7 +663,7 @@ function App() {
             <div style={{ display: 'flex', gap: '8px', marginTop: '2px', fontSize: '0.75rem', flexWrap: 'wrap' }}>
               {userToken && userToken.startsWith('guest_') ? (
                 <>
-                  <span onClick={() => setShowAuthModal(true)} className="signout-link" style={{ fontWeight: '700' }}>Login</span>
+                  <span onClick={() => { setShowAuthModal(true); setShowSidebar(false); }} className="signout-link" style={{ fontWeight: '700' }}>Login</span>
                   <span style={{ color: 'var(--text-muted)' }}>•</span>
                   <span onClick={handleResetGuestSession} className="signout-link">Reset</span>
                 </>
@@ -676,6 +682,9 @@ function App() {
       <div className="main-content-wrapper" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <main className="chat-area" style={{ flex: viewerData ? 0.6 : 1, transition: 'flex 0.4s ease' }}>
           <header className="chat-header">
+            <button className="sidebar-toggle-btn" onClick={() => setShowSidebar(!showSidebar)} aria-label="Toggle Sidebar">
+              <Menu size={20} />
+            </button>
             <div className="document-info">
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 {activeDoc ? <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: activeDoc.status === 'completed' ? '#10b981' : '#f59e0b' }}></span> : <Sparkles size={16} className="sparkles-icon" />}
