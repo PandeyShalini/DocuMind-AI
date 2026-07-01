@@ -162,8 +162,29 @@ const getDocumentStatus = async (req, res) => {
 // @route   GET /api/documents
 // @access  Private
 const getDocuments = async (req, res) => {
-  const documents = await Document.find({ user: req.user._id }).sort({ createdAt: -1 });
-  res.json(documents);
+  try {
+    const documents = await Document.find({ user: req.user._id }).sort({ createdAt: -1 });
+    res.json({
+      documents,
+      lastActiveDocumentId: req.user.lastActiveDocument || null
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching documents' });
+  }
+};
+
+// @desc    Update last active document for user
+// @route   PUT /api/documents/active
+// @access  Private
+const updateActiveDocument = async (req, res) => {
+  try {
+    const { activeDocId } = req.body;
+    req.user.lastActiveDocument = activeDocId || null;
+    await req.user.save();
+    res.status(200).json({ message: 'Active document updated successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message || 'Server Error updating active document' });
+  }
 };
 
 // @desc    Download PDF file on demand
@@ -216,6 +237,7 @@ const downloadDocument = async (req, res) => {
 module.exports = {
   uploadDocument,
   getDocuments,
+  updateActiveDocument,
   getDocumentStatus,
   downloadDocument
 };

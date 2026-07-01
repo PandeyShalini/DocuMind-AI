@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageSquare, Send, Plus, FileText, UploadCloud, Settings, Database, Loader2, Copy, Check, ToggleLeft, ToggleRight, Sparkles, ChevronDown, ChevronUp, Menu } from 'lucide-react';
+import { MessageSquare, Send, Plus, FileText, UploadCloud, Settings, Database, Loader2, Copy, Check, ToggleLeft, ToggleRight, Sparkles, ChevronDown, ChevronUp, Menu, Info } from 'lucide-react';
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.DEV 
@@ -430,6 +430,8 @@ function App() {
   const [activeDoc, setActiveDoc] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [typingStatus, setTypingStatus] = useState('');
+  const [loadingDocs, setLoadingDocs] = useState(true);
   const [userToken, setUserToken] = useState(() => {
     const token = localStorage.getItem('rag_token');
     if (token) return token;
@@ -479,6 +481,68 @@ function App() {
     if (userToken) fetchDocuments(userToken);
   }, [userToken]);
 
+  // Sync active document state to backend
+  const updateBackendActiveDocument = async (token, docId) => {
+    if (!token || token.startsWith('guest_')) return;
+    try {
+      await axios.put(`${API_BASE_URL}/documents/active`, 
+        { activeDocId: docId },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    } catch (err) {
+      console.error('Failed to sync active document to backend:', err);
+    }
+  };
+
+  // Centralized document selection handler
+  const handleSelectDocument = (doc) => {
+    setActiveDoc(doc);
+    if (doc) {
+      localStorage.setItem('active_doc_id', doc._id);
+      if (viewerData) setViewerData({ docId: doc._id, page: 1 });
+      updateBackendActiveDocument(userToken, doc._id);
+    } else {
+      localStorage.setItem('active_doc_id', 'all');
+      setViewerData(null);
+      updateBackendActiveDocument(userToken, null);
+    }
+    setShowSidebar(false);
+  };
+
+  // Fetch chat history from backend
+  const fetchChatHistory = async (token, docId) => {
+    if (!token) return;
+    try {
+      const targetId = docId || 'all';
+      const res = await axios.get(`${API_BASE_URL}/chat/${targetId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data && res.data.length > 0) {
+        setMessages(res.data);
+      } else {
+        if (activeDoc && activeDoc._id === docId && activeDoc.status === 'processing') {
+          setMessages([
+            { role: 'assistant', content: `Processing **${activeDoc.filename}**... I am extracting text and building vector indexes. You can start asking questions once the status tag changes to 'Active'.` }
+          ]);
+        } else {
+          setMessages([
+            { role: 'assistant', content: 'Upload a PDF and ask questions. Get accurate answers with source references. No hallucination. Fully explainable AI.' }
+          ]);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch chat history:', err);
+    }
+  };
+
+  // Auto-load history when activeDoc changes, but only after documents finish loading
+  useEffect(() => {
+    if (userToken && !loadingDocs) {
+      const docId = activeDoc?._id || 'all';
+      fetchChatHistory(userToken, docId);
+    }
+  }, [activeDoc, userToken, loadingDocs]);
+
   const handleAuthSuccess = (token, name) => {
     setUserToken(token);
     setUserName(name);
@@ -489,6 +553,7 @@ function App() {
   const handleLogout = () => {
     localStorage.removeItem('rag_token');
     localStorage.removeItem('rag_user');
+    localStorage.removeItem('active_doc_id');
     
     const guestToken = localStorage.getItem('guest_token');
     setUserToken(guestToken);
@@ -502,30 +567,79 @@ function App() {
     ]);
   };
 
-  const handleResetGuestSession = () => {
-    const newGuestToken = 'guest_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-    localStorage.setItem('guest_token', newGuestToken);
-    localStorage.removeItem('rag_token');
-    localStorage.removeItem('rag_user');
-    setUserToken(newGuestToken);
-    setUserName('Guest ' + newGuestToken.substring(6, 12).toUpperCase());
-    
-    // Clear chat and document states in UI
-    setDocuments([]);
-    setActiveDoc(null);
-    setMessages([
-      { role: 'assistant', content: 'Upload a PDF and ask questions. Get accurate answers with source references. No hallucination. Fully explainable AI.' }
-    ]);
+  const handleResetGuestSession = async () => {
+    if (window.confirm("Are you sure you want to reset this guest session? All your uploaded documents and chat history will be permanently deleted from the database and vector index.")) {
+      try {
+        // Purge backend guest data
+        await axios.delete(`${API_BASE_URL}/auth/guest`, {
+          headers: { Authorization: `Bearer ${userToken}` }
+        });
+      } catch (err) {
+        console.error('Failed to clear guest session from backend:', err);
+      }
+
+      // Purge client-side cached data (LocalStorage, SessionStorage, IndexedDB)
+      localStorage.clear();
+      sessionStorage.clear();
+      try {
+        const DB_NAME = 'DocuMindCacheDB';
+        indexedDB.deleteDatabase(DB_NAME);
+      } catch (dbErr) {
+        console.error('Error clearing IndexedDB:', dbErr);
+      }
+
+      // Initialize fresh guest session
+      const newGuestToken = 'guest_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      localStorage.setItem('guest_token', newGuestToken);
+      setUserToken(newGuestToken);
+      setUserName('Guest ' + newGuestToken.substring(6, 12).toUpperCase());
+      
+      // Clear chat and document states in UI
+      setDocuments([]);
+      setActiveDoc(null);
+      setMessages([
+        { role: 'assistant', content: 'Upload a PDF and ask questions. Get accurate answers with source references. No hallucination. Fully explainable AI.' }
+      ]);
+      setViewerData(null);
+    }
   };
 
   const fetchDocuments = async (token) => {
+    setLoadingDocs(true);
     try {
       const res = await axios.get(`${API_BASE_URL}/documents`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setDocuments(res.data || []);
+      const docs = res.data.documents || [];
+      const backendLastActiveId = res.data.lastActiveDocumentId;
+      setDocuments(docs);
+      
+      // Restore active document focus with smart fallbacks
+      const savedDocId = localStorage.getItem('active_doc_id');
+      if (savedDocId === 'all') {
+        setActiveDoc(null);
+      } else if (savedDocId) {
+        const found = docs.find(d => d._id === savedDocId);
+        if (found) {
+          setActiveDoc(found);
+        } else {
+          setActiveDoc(docs[0] || null);
+        }
+      } else if (backendLastActiveId) {
+        const found = docs.find(d => d._id === backendLastActiveId);
+        if (found) {
+          setActiveDoc(found);
+          localStorage.setItem('active_doc_id', found._id);
+        } else {
+          setActiveDoc(docs[0] || null);
+        }
+      } else {
+        setActiveDoc(docs[0] || null);
+      }
     } catch (err) {
       if (err.response?.status === 401 && token !== "BYPASS_TOKEN") handleLogout();
+    } finally {
+      setLoadingDocs(false);
     }
   };
 
@@ -587,6 +701,12 @@ function App() {
     setMessages(prev => [...prev, { role: 'user', content: queryText }]);
     setInput('');
     setIsTyping(true);
+    setTypingStatus('Searching document database...');
+    
+    const statusTimer = setTimeout(() => {
+      setTypingStatus('Synthesizing knowledge & generating AI response...');
+    }, 1200);
+
     try {
       const res = await axios.post(`${API_BASE_URL}/chat/${docId}`, 
         { message: queryText, strictMode },
@@ -595,8 +715,11 @@ function App() {
       setMessages(prev => [...prev, { role: 'assistant', content: res.data.content }]);
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', content: "Error connecting to AI engine!" }]);
+    } finally {
+      clearTimeout(statusTimer);
+      setIsTyping(false);
+      setTypingStatus('');
     }
-    setIsTyping(false);
   };
 
   const handleSourceClick = (source) => {
@@ -624,34 +747,43 @@ function App() {
            {isUploading ? 'Uploading...' : 'Upload New PDF'}
         </button>
         <div className="history-list">
-          <div className={`global-search-item ${!activeDoc ? 'active' : ''}`} onClick={() => {
-             setActiveDoc(null);
-             setViewerData(null);
-             setShowSidebar(false);
-          }}>
+          <div className={`global-search-item ${!activeDoc ? 'active' : ''}`} onClick={() => handleSelectDocument(null)}>
              <Sparkles size={18} /> Search All My Knowledge
           </div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: '600', textTransform: 'uppercase', marginBottom: '0.5rem', marginTop: '1rem', letterSpacing: '1px' }}>My Library</div>
-          {documents.map(doc => (
-              <div key={doc._id} className={`history-item ${activeDoc?._id === doc._id ? 'active' : ''}`} onClick={() => {
-                setActiveDoc(doc);
-                if (viewerData) setViewerData({ docId: doc._id, page: 1 });
-                setShowSidebar(false);
-              }}>
-               <FileText size={18} />
-               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                 <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.filename}</span>
-                 {doc.storagePath && (
-                    <span style={{ fontSize: '0.65rem', color: 'var(--primary)', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '2px' }}>
-                      <Sparkles size={8}/> DEEP VIEW READY
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: '600', textTransform: 'uppercase', marginBottom: '0.5rem', marginTop: '1rem', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+             My Library
+             {loadingDocs && <Loader2 className="animate-spin" size={12} style={{ color: 'var(--primary)' }} />}
+          </div>
+          {loadingDocs ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem 0' }}>
+              <Loader2 className="animate-spin" size={24} style={{ color: 'var(--primary)' }} />
+            </div>
+          ) : (
+            <>
+              {documents.length === 0 ? (
+                <div style={{ padding: '1rem 0.5rem', color: 'var(--text-muted)', fontSize: '0.8rem', textAlign: 'center' }}>
+                  No documents uploaded yet.
+                </div>
+              ) : (
+                documents.map(doc => (
+                  <div key={doc._id} className={`history-item ${activeDoc?._id === doc._id ? 'active' : ''}`} onClick={() => handleSelectDocument(doc)}>
+                    <FileText size={18} />
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.filename}</span>
+                      {doc.storagePath && (
+                         <span style={{ fontSize: '0.65rem', color: 'var(--primary)', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                           <Sparkles size={8}/> DEEP VIEW READY
+                         </span>
+                      )}
+                    </div>
+                    <span className={`status-tag status-${doc.status}`}>
+                       {doc.status === 'processing' ? 'Syncing...' : (doc.status === 'completed' ? 'Active' : 'Error')}
                     </span>
-                 )}
-               </div>
-               <span className={`status-tag status-${doc.status}`}>
-                  {doc.status === 'processing' ? 'Syncing...' : (doc.status === 'completed' ? 'Active' : 'Error')}
-               </span>
-             </div>
-          ))}
+                  </div>
+                ))
+              )}
+            </>
+          )}
         </div>
         <div className="sidebar-footer">
           <div className="user-profile-avatar">{userName ? userName[0].toUpperCase() : 'U'}</div>
@@ -692,9 +824,21 @@ function App() {
               </span>
             </div>
             <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
-              <div onClick={() => setStrictMode(!strictMode)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', color: strictMode ? '#10b981' : 'var(--text-muted)', fontSize: '0.9rem', userSelect: 'none' }}>
-                {strictMode ? <ToggleRight size={24} color="#10b981" /> : <ToggleLeft size={24} />}
-                <span style={{ fontWeight: '500' }}>Strict Mode</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <div onClick={() => setStrictMode(!strictMode)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', color: strictMode ? '#10b981' : 'var(--text-muted)', fontSize: '0.9rem', userSelect: 'none' }}>
+                  {strictMode ? <ToggleRight size={24} color="#10b981" /> : <ToggleLeft size={24} />}
+                  <span style={{ fontWeight: '500' }}>Strict Mode</span>
+                </div>
+                <div className="tooltip-container">
+                  <Info size={14} style={{ cursor: 'help' }} />
+                  <div className="tooltip-text">
+                    <strong>Strict Mode Controls AI Hallucinations:</strong>
+                    <br /><br />
+                    • <strong>When Enabled:</strong> The AI replies strictly using facts from the selected PDF. If not found, it responds: <em>"Information not found in document"</em>.
+                    <br /><br />
+                    • <strong>When Disabled:</strong> The AI will use general training knowledge as a fallback if the document does not contain the answer.
+                  </div>
+                </div>
               </div>
               <input type="file" accept="application/pdf" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileChange} />
             </div>
@@ -713,7 +857,7 @@ function App() {
             ))}
             {isTyping && (
               <div className="message assistant" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', padding: '1rem' }}>
-                <Loader2 className="animate-spin" size={16} /> Retrieving chunks & synthesizing knowledge...
+                <Loader2 className="animate-spin" size={16} /> {typingStatus}
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -721,7 +865,7 @@ function App() {
 
           <div className="input-area">
             <form className="input-box" onSubmit={handleSend}>
-              <textarea placeholder={activeDoc ? `Ask about ${activeDoc.filename}...` : "Query entire document library..."} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }} />
+              <textarea disabled={isTyping} placeholder={activeDoc ? `Ask about ${activeDoc.filename}...` : "Query entire document library..."} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }} />
               <button className="send-btn" type="submit" disabled={isTyping || !input.trim()}><Send size={18} /></button>
             </form>
             <p style={{ textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>DocuMind AI can hallucinate. Cross-check with cited sources.</p>

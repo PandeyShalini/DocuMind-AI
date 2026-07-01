@@ -1003,3 +1003,67 @@ body {
   to { opacity: 1; }
 }
 
+/* --- SPIN ANIMATION --- */
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* --- TOOLTIP STYLING --- */
+.tooltip-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  transition: color 0.2s ease;
+}
+
+.tooltip-container:hover {
+  color: var(--primary);
+}
+
+.tooltip-text {
+  visibility: hidden;
+  width: 260px;
+  background-color: var(--surface);
+  color: var(--text-main);
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.85rem;
+  position: absolute;
+  z-index: 100;
+  bottom: 125%; /* Position above the icon */
+  right: -10px;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform: translateY(4px);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  pointer-events: none;
+  font-weight: normal;
+}
+
+.tooltip-text::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  right: 12px;
+  margin-left: -5px;
+  border-width: 5px;
+  border-style: solid;
+  border-color: var(--border) transparent transparent transparent;
+}
+
+.tooltip-container:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
+
