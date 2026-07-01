@@ -1037,12 +1037,13 @@ body {
   border-radius: 12px;
   padding: 0.85rem;
   position: absolute;
-  z-index: 100;
-  bottom: 125%; /* Position above the icon */
+  z-index: 1000;
+  top: 125%; /* Position below the icon */
+  bottom: auto;
   right: -10px;
   opacity: 0;
   transition: opacity 0.2s ease, transform 0.2s ease;
-  transform: translateY(4px);
+  transform: translateY(-4px);
   box-shadow: var(--shadow-lg);
   font-size: 0.75rem;
   line-height: 1.45;
@@ -1053,12 +1054,13 @@ body {
 .tooltip-text::after {
   content: "";
   position: absolute;
-  top: 100%;
+  bottom: 100%; /* Arrow at the top of tooltip */
+  top: auto;
   right: 12px;
   margin-left: -5px;
   border-width: 5px;
   border-style: solid;
-  border-color: var(--border) transparent transparent transparent;
+  border-color: transparent transparent var(--border) transparent; /* Arrow pointing up */
 }
 
 .tooltip-container:hover .tooltip-text {
